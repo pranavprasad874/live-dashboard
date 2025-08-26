@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Live Feed - Full DB (Dynamic)</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    #controls { margin-bottom: 12px; }
+    #feed li { margin: 6px 0; font-family: monospace; white-space: pre-wrap; }
+    #loading { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Live Feed - Full Database (Dynamic)</h1>
+
+  <div id="controls">
+    <label>Table:
+      <select id="tableSelect"></select>
+    </label>
+
+    <label style="margin-left:12px">Search:
+      <input id="search" placeholder="search text..." />
+    </label>
+
+    <button id="refreshBtn">Refresh Now</button>
+    <span id="loading" style="margin-left:12px"></span>
+  </div>
+
+  <div>
+    <small>Auto-refresh every 15 minutes. Scroll to bottom to load more pages.</small>
+  </div>
+
+  <ul id="feed"></ul>
+  <div id="pagerInfo"></div>
+
+<script>
+  // EDIT THIS to your ngrok/host base URL, without trailing slash
+  const API_BASE = "https://manga-without-barnes-zus.trycloudflare.com/";
+
+  let selectedTable = null;
+  let currentPage = 1;
+  let pageSize = 100;
+  let totalRows = 0;
+  let loadedRows = 0;
+  let allData = []; // loaded so far
+  let qterm = "";
+
+  const tableSelect = document.getElementById('tableSelect');
+  const searchInput = document.getElementById('search');
+  const feed = document.getElementById('feed');
+  const loadingSpan = document.getElementById('loading');
+  const pagerInfo = document.getElementById('pagerInfo');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  async function fetchJSON(url) {
+    loadingSpan.textContent = "Loading...";
+    try {
+      const res = await fetch(url);
+      const txt = await res.text();
+      // try parse; if not JSON, show
+      const json = JSON.parse(txt);
+      loadingSpan.textContent = "";
+      return json;
+    } catch (err) {
+      loadingSpan.textContent = "Error loading (see console)";
+      console.error("Fetch error:", err);
+      throw err;
+    }
+  }
+
+  async function loadTables() {
+    const data = await fetchJSON(`${API_BASE}/tables`);
+    tableSelect.innerHTML = "";
+    data.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      tableSelect.appendChild(opt);
+    });
+    if(data.length > 0) {
+      selectedTable = data[0];
+      tableSelect.value = selectedTable;
+      resetAndLoad();
+    }
+  }
+
+  async function loadPage(page) {
+    if(!selectedTable) return;
+    const url = `${API_BASE}/feed?table=${encodeURIComponent(selectedTable)}&page=${page}&page_size=${pageSize}${qterm ? "&q=" + encodeURIComponent(qterm) : ""}`;
+    const resp = await fetchJSON(url);
+    if(resp.error){
+      console.error("API error:", resp.error);
+      return;
+    }
+    // update metadata
+    totalRows = resp.total_rows || totalRows;
+    loadedRows += resp.rows_returned;
+    allData = allData.concat(resp.data);
+    render(allData);
+    pagerInfo.textContent = `Loaded ${loadedRows} of ${totalRows} rows (page ${resp.page})`;
+    // if returned rows less than pageSize - no more pages
+    return resp.rows_returned;
+  }
+
+  function render(data) {
+    feed.innerHTML = "";
+    data.forEach(row => {
+      const li = document.createElement('li');
+      li.textContent = JSON.stringify(row, null, 2);
+      feed.appendChild(li);
+    });
+  }
+
+  function resetAndLoad(){
+    currentPage = 1; totalRows = 0; loadedRows = 0; allData = [];
+    feed.innerHTML = "";
+    loadPage(currentPage).then(cnt => {
+      if(cnt && cnt > 0) currentPage++;
+    }).catch(()=>{});
+  }
+
+  tableSelect.addEventListener('change', () => {
+    selectedTable = tableSelect.value;
+    resetAndLoad();
+  });
+
+  searchInput.addEventListener('input', (e) => {
+    qterm = e.target.value.trim();
+    // reset and load from first page with search
+    resetAndLoad();
+  });
+
+  refreshBtn.addEventListener('click', () => {
+    resetAndLoad();
+  });
+
+  // infinite scroll: load next page when scrolled near bottom
+  window.addEventListener('scroll', () => {
+    if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 60) {
+      // only load if there are more rows expected
+      if (loadedRows < totalRows) {
+        loadPage(currentPage).then(cnt => {
+          if(cnt && cnt > 0) currentPage++;
+        }).catch(()=>{});
+      }
+    }
+  });
+
+  // auto refresh every 15 minutes
+  setInterval(() => {
+    resetAndLoad();
+  }, 15 * 60 * 1000);
+
+  // initial
+  loadTables();
+</script>
+</body>
+</html>
