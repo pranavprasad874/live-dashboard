@@ -1,169 +1,171 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Live Feed - Full DB (Dynamic)</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    #controls { margin-bottom: 12px; }
-    #feed li { margin: 6px 0; font-family: monospace; white-space: pre-wrap; }
-    #loading { color: #666; }
-  </style>
+    <meta charset="UTF-8">
+    <title>Live Feed - Full Database (Dynamic)</title>
+    <!-- Add any CSS links or styles here if needed -->
 </head>
 <body>
-  <h1>Live Feed - Full Database (Dynamic)</h1>
+    <h1>Live Feed</h1>
 
-  <div id="controls">
-    <label>Table:
-      <select id="tableSelect"></select>
-    </label>
+    <!-- New section for configurable backend URL -->
+    <div>
+        Backend URL: <input type="text" id="backendUrlInput" placeholder="e.g., https://your-temp.trycloudflare.com" style="width: 300px;">
+        <button id="saveUrlButton">Save URL</button>
+        <p id="currentUrlDisplay">Current saved URL: none</p>
+    </div>
 
-    <label style="margin-left:12px">Search:
-      <input id="search" placeholder="search text..." />
-    </label>
+    <div>
+        Table: <select id="tableSelect"></select>
+    </div>
 
-    <button id="refreshBtn">Refresh Now</button>
-    <span id="loading" style="margin-left:12px"></span>
-  </div>
+    <div>
+        Search: <input type="text" id="searchInput" placeholder="Search...">
+    </div>
 
-  <div>
-    <small>Auto-refresh every 15 minutes. Scroll to bottom to load more pages.</small>
-  </div>
+    <button id="refreshButton">Refresh Now</button>
 
-  <ul id="feed"></ul>
-  <div id="pagerInfo"></div>
+    <p>Auto-refresh every 15 minutes. Scroll to bottom to load more pages.</p>
 
-<script>
-  // EDIT THIS to your ngrok/host base URL, without trailing slash
-  const API_BASE = "https://skills-balloon-disabled-lottery.trycloudflare.com";
+    <table id="dataTable">
+        <thead id="tableHeader"></thead>
+        <tbody id="tableBody"></tbody>
+    </table>
 
-  let selectedTable = null;
-  let currentPage = 1;
-  let pageSize = 100;
-  let totalRows = 0;
-  let loadedRows = 0;
-  let allData = []; // loaded so far
-  let qterm = "";
+    <script>
+        // Key variable for backend URL (loaded from localStorage)
+        let baseUrl = localStorage.getItem('backendUrl') || '';
 
-  const tableSelect = document.getElementById('tableSelect');
-  const searchInput = document.getElementById('search');
-  const feed = document.getElementById('feed');
-  const loadingSpan = document.getElementById('loading');
-  const pagerInfo = document.getElementById('pagerInfo');
-  const refreshBtn = document.getElementById('refreshBtn');
+        // Display current saved URL
+        const currentUrlDisplay = document.getElementById('currentUrlDisplay');
+        currentUrlDisplay.textContent = `Current saved URL: ${baseUrl || 'none (set one to load data)'}`;
 
-  async function fetchJSON(url) {
-    loadingSpan.textContent = "Loading...";
-    try {
-      const res = await fetch(url);
-      const txt = await res.text();
-      // try parse; if not JSON, show
-      const json = JSON.parse(txt);
-      loadingSpan.textContent = "";
-      return json;
-    } catch (err) {
-      loadingSpan.textContent = "Error loading (see console)";
-      console.error("Fetch error:", err);
-      throw err;
-    }
-  }
+        // Handle saving new URL
+        const backendUrlInput = document.getElementById('backendUrlInput');
+        const saveUrlButton = document.getElementById('saveUrlButton');
+        saveUrlButton.addEventListener('click', () => {
+            baseUrl = backendUrlInput.value.trim();
+            if (baseUrl) {
+                localStorage.setItem('backendUrl', baseUrl);
+                currentUrlDisplay.textContent = `Current saved URL: ${baseUrl}`;
+                alert('URL saved! Refresh the page or click "Refresh Now" to load data.');
+                loadTables(); // Reload tables to test the new URL
+            } else {
+                alert('Please enter a valid URL.');
+            }
+        });
 
-  async function loadTables() {
-    const data = await fetchJSON(`${API_BASE}/tables`);
-    tableSelect.innerHTML = "";
-    data.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t; opt.textContent = t;
-      tableSelect.appendChild(opt);
-    });
-    if(data.length > 0) {
-      selectedTable = data[0];
-      tableSelect.value = selectedTable;
-      resetAndLoad();
-    }
-  }
+        // If no URL is set, prompt the user on load
+        if (!baseUrl) {
+            const promptedUrl = prompt('No backend URL set. Enter your Cloudflare tunnel URL (e.g., https://your-temp.trycloudflare.com):');
+            if (promptedUrl) {
+                baseUrl = promptedUrl.trim();
+                localStorage.setItem('backendUrl', baseUrl);
+                currentUrlDisplay.textContent = `Current saved URL: ${baseUrl}`;
+            }
+        }
 
-  async function loadPage(page) {
-    if(!selectedTable) return;
-    const url = `${API_BASE}/feed?table=${encodeURIComponent(selectedTable)}&page=${page}&page_size=${pageSize}${qterm ? "&q=" + encodeURIComponent(qterm) : ""}`;
-    const resp = await fetchJSON(url);
-    if(resp.error){
-      console.error("API error:", resp.error);
-      return;
-    }
-    // update metadata
-    totalRows = resp.total_rows || totalRows;
-    loadedRows += resp.rows_returned;
-    allData = allData.concat(resp.data);
-    render(allData);
-    pagerInfo.textContent = `Loaded ${loadedRows} of ${totalRows} rows (page ${resp.page})`;
-    // if returned rows less than pageSize - no more pages
-    return resp.rows_returned;
-  }
+        // Your existing JS for loading tables and data (adapted to use baseUrl)
+        const tableSelect = document.getElementById('tableSelect');
+        const searchInput = document.getElementById('searchInput');
+        const refreshButton = document.getElementById('refreshButton');
+        const tableHeader = document.getElementById('tableHeader');
+        const tableBody = document.getElementById('tableBody');
 
-  function render(data) {
-    feed.innerHTML = "";
-    data.forEach(row => {
-      const li = document.createElement('li');
-      li.textContent = JSON.stringify(row, null, 2);
-      feed.appendChild(li);
-    });
-  }
+        let currentTable = '';
+        let currentPage = 1;
+        const pageSize = 100; // Match your backend default
+        let isLoading = false;
 
-  function resetAndLoad(){
-    currentPage = 1; totalRows = 0; loadedRows = 0; allData = [];
-    feed.innerHTML = "";
-    loadPage(currentPage).then(cnt => {
-      if(cnt && cnt > 0) currentPage++;
-    }).catch(()=>{});
-  }
+        // Function to load list of tables
+        async function loadTables() {
+            if (!baseUrl) return alert('Set a backend URL first.');
+            try {
+                const response = await fetch(`${baseUrl}/tables`);
+                if (!response.ok) throw new Error('Failed to fetch tables');
+                const tables = await response.json();
+                tableSelect.innerHTML = tables.map(table => `<option value="${table}">${table}</option>`).join('');
+                if (tables.length > 0) {
+                    currentTable = tables[0];
+                    tableSelect.value = currentTable;
+                    loadData();
+                }
+            } catch (error) {
+                console.error(error);
+                alert('Error loading tables: ' + error.message);
+            }
+        }
 
-  tableSelect.addEventListener('change', () => {
-    selectedTable = tableSelect.value;
-    resetAndLoad();
-  });
+        // Function to load paginated data
+        async function loadData(append = false) {
+            if (!baseUrl || !currentTable || isLoading) return;
+            isLoading = true;
+            try {
+                const query = searchInput.value.trim();
+                const url = `${baseUrl}/feed?table=${currentTable}&page=${currentPage}&page_size=${pageSize}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('Failed to fetch data');
+                const { data, total_rows, rows_returned } = await response.json();
 
-  searchInput.addEventListener('input', (e) => {
-    qterm = e.target.value.trim();
-    // reset and load from first page with search
-    resetAndLoad();
-  });
+                if (!append) {
+                    tableBody.innerHTML = ''; // Clear for new search or table
+                    if (data.length > 0) {
+                        const headers = Object.keys(data[0]);
+                        tableHeader.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+                    }
+                }
 
-  refreshBtn.addEventListener('click', () => {
-    resetAndLoad();
-  });
+                data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    Object.values(row).forEach(val => {
+                        const td = document.createElement('td');
+                        td.textContent = val;
+                        tr.appendChild(td);
+                    });
+                    tableBody.appendChild(tr);
+                });
 
-  // infinite scroll: load next page when scrolled near bottom
-  window.addEventListener('scroll', () => {
-    if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 60) {
-      // only load if there are more rows expected
-      if (loadedRows < totalRows) {
-        loadPage(currentPage).then(cnt => {
-          if(cnt && cnt > 0) currentPage++;
-        }).catch(()=>{});
-      }
-    }
-  });
+                if (rows_returned > 0) currentPage++;
+            } catch (error) {
+                console.error(error);
+                alert('Error loading data: ' + error.message);
+            } finally {
+                isLoading = false;
+            }
+        }
 
-  // auto refresh every 15 minutes
-  setInterval(() => {
-    resetAndLoad();
-  }, 15 * 60 * 1000);
+        // Event listeners
+        tableSelect.addEventListener('change', () => {
+            currentTable = tableSelect.value;
+            currentPage = 1;
+            loadData();
+        });
 
-  // initial
-  loadTables();
-</script>
+        searchInput.addEventListener('input', () => {
+            currentPage = 1;
+            loadData();
+        });
+
+        refreshButton.addEventListener('click', () => {
+            currentPage = 1;
+            loadData();
+        });
+
+        // Infinite scroll (scroll to bottom to load more)
+        window.addEventListener('scroll', () => {
+            if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 100) {
+                loadData(true); // Append mode
+            }
+        });
+
+        // Auto-refresh every 15 minutes
+        setInterval(() => {
+            currentPage = 1;
+            loadData();
+        }, 15 * 60 * 1000);
+
+        // Initial load
+        loadTables();
+    </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
