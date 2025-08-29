@@ -1,14 +1,57 @@
-<!DOCTYPE html>
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Live Feed - Full Database (Dynamic)</title>
-    <!-- Add any CSS links or styles here if needed -->
+    <style>
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        input, select, button { margin: 5px; padding: 5px; }
+    </style>
 </head>
 <body>
     <h1>Live Feed</h1>
 
-    <!-- New section for configurable backend URL -->
     <div>
         Backend URL: <input type="text" id="backendUrlInput" placeholder="e.g., https://your-temp.trycloudflare.com" style="width: 300px;">
         <button id="saveUrlButton">Save URL</button>
@@ -33,14 +76,10 @@
     </table>
 
     <script>
-        // Key variable for backend URL (loaded from localStorage)
         let baseUrl = localStorage.getItem('backendUrl') || '';
-
-        // Display current saved URL
         const currentUrlDisplay = document.getElementById('currentUrlDisplay');
         currentUrlDisplay.textContent = `Current saved URL: ${baseUrl || 'none (set one to load data)'}`;
 
-        // Handle saving new URL
         const backendUrlInput = document.getElementById('backendUrlInput');
         const saveUrlButton = document.getElementById('saveUrlButton');
         saveUrlButton.addEventListener('click', () => {
@@ -49,13 +88,12 @@
                 localStorage.setItem('backendUrl', baseUrl);
                 currentUrlDisplay.textContent = `Current saved URL: ${baseUrl}`;
                 alert('URL saved! Refresh the page or click "Refresh Now" to load data.');
-                loadTables(); // Reload tables to test the new URL
+                loadTables();
             } else {
                 alert('Please enter a valid URL.');
             }
         });
 
-        // If no URL is set, prompt the user on load
         if (!baseUrl) {
             const promptedUrl = prompt('No backend URL set. Enter your Cloudflare tunnel URL (e.g., https://your-temp.trycloudflare.com):');
             if (promptedUrl) {
@@ -65,7 +103,6 @@
             }
         }
 
-        // Your existing JS for loading tables and data (adapted to use baseUrl)
         const tableSelect = document.getElementById('tableSelect');
         const searchInput = document.getElementById('searchInput');
         const refreshButton = document.getElementById('refreshButton');
@@ -74,16 +111,23 @@
 
         let currentTable = '';
         let currentPage = 1;
-        const pageSize = 100; // Match your backend default
+        const pageSize = 100;
         let isLoading = false;
 
-        // Function to load list of tables
         async function loadTables() {
             if (!baseUrl) return alert('Set a backend URL first.');
             try {
-                const response = await fetch(`${baseUrl}/tables`);
-                if (!response.ok) throw new Error('Failed to fetch tables');
+                const response = await fetch(`${baseUrl}/tables`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                }
                 const tables = await response.json();
+                if (!Array.isArray(tables)) {
+                    throw new Error('Unexpected response format from /tables');
+                }
                 tableSelect.innerHTML = tables.map(table => `<option value="${table}">${table}</option>`).join('');
                 if (tables.length > 0) {
                     currentTable = tables[0];
@@ -91,24 +135,28 @@
                     loadData();
                 }
             } catch (error) {
-                console.error(error);
-                alert('Error loading tables: ' + error.message);
+                console.error('Error in loadTables:', error);
+                alert(`Failed to load tables. Check the backend URL and ensure the server is running.\nError: ${error.message}`);
             }
         }
 
-        // Function to load paginated data
         async function loadData(append = false) {
             if (!baseUrl || !currentTable || isLoading) return;
             isLoading = true;
             try {
                 const query = searchInput.value.trim();
                 const url = `${baseUrl}/feed?table=${currentTable}&page=${currentPage}&page_size=${pageSize}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
-                const response = await fetch(url);
-                if (!response.ok) throw new Error('Failed to fetch data');
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                }
                 const { data, total_rows, rows_returned } = await response.json();
 
                 if (!append) {
-                    tableBody.innerHTML = ''; // Clear for new search or table
+                    tableBody.innerHTML = '';
                     if (data.length > 0) {
                         const headers = Object.keys(data[0]);
                         tableHeader.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
@@ -127,14 +175,13 @@
 
                 if (rows_returned > 0) currentPage++;
             } catch (error) {
-                console.error(error);
-                alert('Error loading data: ' + error.message);
+                console.error('Error in loadData:', error);
+                alert(`Failed to load data. Check the backend URL and server status.\nError: ${error.message}`);
             } finally {
                 isLoading = false;
             }
         }
 
-        // Event listeners
         tableSelect.addEventListener('change', () => {
             currentTable = tableSelect.value;
             currentPage = 1;
@@ -151,20 +198,17 @@
             loadData();
         });
 
-        // Infinite scroll (scroll to bottom to load more)
         window.addEventListener('scroll', () => {
             if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 100) {
-                loadData(true); // Append mode
+                loadData(true);
             }
         });
 
-        // Auto-refresh every 15 minutes
         setInterval(() => {
             currentPage = 1;
             loadData();
         }, 15 * 60 * 1000);
 
-        // Initial load
         loadTables();
     </script>
 </body>
